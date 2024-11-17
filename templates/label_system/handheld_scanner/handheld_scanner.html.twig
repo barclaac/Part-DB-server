@@ -1,0 +1,10 @@
+{% extends 'main_card.html.twig' %}
+
+{% block card_title %}Barcode Scanner Operations{% endblock %}
+
+{% block card_content %}
+    <div class="">
+      Alex test page
+      <div id="scanner" {{ stimulus_controller('pages/handheld_scan') }}></div>
+    </div>
+{% endblock %}
