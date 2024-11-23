@@ -1,10 +1,19 @@
 {% extends 'main_card.html.twig' %}
 
-{% block card_title %}Barcode Scanner Operations{% endblock %}
+{% block card_title %}<i class="fas fa-camera-retro fa-fw"></i>Handheld Scanner Operations{% endblock %}
 
 {% block card_content %}
+{{ form_start(form, {'attr': {'id': 'handheld_dialog_form'}}) }}
+
+{{ form_end(form) }}
+
     <div class="">
-      Alex test page
-      <div id="scanner" {{ stimulus_controller('pages/handheld_scan') }}></div>
+      <div id="scanner" {{ stimulus_controller('pages/handheld_scan')}}>
+	<div class="row mb-2">
+          <div class="col-sm-8 offset-sm-4 ">
+            <button type="button" class="btn btn-primary" {{ stimulus_action('pages/handheld_scan', 'onConnectScanner') }}>Connect</button>
+          </div>
+	</div>
+      </div>
     </div>
 {% endblock %}
