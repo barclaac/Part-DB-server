@@ -23,7 +23,9 @@ use App\Services\Parts\PartLotWithdrawAddHelper;
 use Doctrine\ORM\EntityManagerInterface;
 use Psr\Log\LoggerInterface;
 use Symfony\Bundle\FrameworkBundle\Controller\AbstractController;
+use Symfony\Component\Form\Extension\Core\Type\ButtonType;
 use Symfony\Component\Form\Extension\Core\Type\HiddenType;
+use Symfony\Component\Form\Extension\Core\Type\IntegerType;
 use Symfony\Component\Form\Extension\Core\Type\SubmitType;
 use Symfony\Component\Form\Extension\Core\Type\TextType;
 use Symfony\Component\Form\FormError;
@@ -38,11 +40,13 @@ class BarcodeScanType
 {
     protected ?string $barcode;
     protected ?string $manufacturerPN;
+    protected ?int  $quantity;
     protected ?string $location;
     
     public function __construct() {
         $this->barcode = "";
         $this->manufacturerPN = "";
+        $this->quantity = 0;
         $this->location = "";
     }
     
@@ -61,6 +65,15 @@ class BarcodeScanType
     
     public function setManufacturerPN(?string $manufacturerPN): self {
         $this->manufacturerPN = $manufacturerPN;
+        return $this;
+    }
+
+    public function getQuantity(): ?int {
+        return $this->quantity;
+    }
+
+    public function setQuantity(?int $quantity): self {
+        $this->quantity = $quantity;
         return $this;
     }
 
@@ -101,6 +114,18 @@ class HandheldScannerController extends AbstractController
             'label' => 'Manufacturer Part',
         ]);
 
+        $builder->add('quantity', IntegerType::Class, [
+            'required' => false,
+            'label' => 'Quantity',
+        ]);
+
+        $builder->add('Connect2', ButtonType::Class, [
+            'label' => 'Connect2',
+        ]);
+        $builder->add('Submit', SubmitType::Class, [
+            'label' => 'Submit',
+        ]);
+        
         $builder->addEventListener(FormEvents::PRE_SUBMIT, function (FormEvent $event) {
             $form = $event->getForm();
             $data = $event->getData();
@@ -114,7 +139,9 @@ class HandheldScannerController extends AbstractController
             if (array_key_exists('supplier_pn', $r)) {
                 $data['manufacturer_pn'] = $r['supplier_pn'];
             }
- 
+            if (array_key_exists('quantity', $r)) {
+                $data['quantity'] = $r['quantity'];
+            }
             $event->setData($data);
         });
 
@@ -123,50 +150,51 @@ class HandheldScannerController extends AbstractController
 
         if ($form->isSubmitted() && $form->isValid()) {
             $logger->info("form submitted");
-
-            $storage = null;
-            $part = null;
-            // See if the storage location exists
-            if ($barcode->getLocation() != "") {
-                $repository = $em->getRepository(StorageLocation::class);
-                $storage = $repository->findOneBy(['name' => $barcode->getLocation()]);
-                $logger->info($storage->getFullPath());
-            }
-
-            // See if the part exists
-            if ($barcode->getManufacturerPN() != "") {
-                $repository = $em->getRepository(Part::class);
-                $part = $repository->findOneBy(['manufacturer_product_number' => $barcode->getManufacturerPN()]);
-                $logger->info($part->getName());
-            }
-
-            // Does a part lot exist for this combination?
-            if ($storage != null && $part != null) {
-                $found=false;
-                foreach ($part->getPartLots() as &$pl) {
-                    if ($pl->getStorageLocation()->getId() == $storage->getId()) {
-                        $logger->info('Found existing storage location, adding stock');
-                        if ($withdrawAddHelper->canAdd($pl)) {
-                            $withdrawAddHelper->add($pl, 10.0, "Test add");
-                            $found = true;
+            if ($form->getClickedButton() == null) {
+                $storage = null;
+                $part = null;
+                // See if the storage location exists
+                if ($barcode->getLocation() != "") {
+                    $repository = $em->getRepository(StorageLocation::class);
+                    $storage = $repository->findOneBy(['name' => $barcode->getLocation()]);
+                    $logger->info($storage->getFullPath());
+                }
+                
+                // See if the part exists
+                if ($barcode->getManufacturerPN() != "") {
+                    $repository = $em->getRepository(Part::class);
+                    $part = $repository->findOneBy(['manufacturer_product_number' => $barcode->getManufacturerPN()]);
+                    $logger->info($part->getName());
+                }
+                
+                // Does a part lot exist for this combination?
+                if ($storage != null && $part != null) {
+                    $found=false;
+                    foreach ($part->getPartLots() as &$pl) {
+                        if ($pl->getStorageLocation()->getId() == $storage->getId()) {
+                            $logger->info('Found existing storage location, adding stock');
+                            if ($withdrawAddHelper->canAdd($pl)) {
+                                $withdrawAddHelper->add($pl, 10.0, "Test add");
+                                $found = true;
+                            }
+                            $em->flush();
+                            break;
+                        }
+                        $logger->info('Part lot {fullPath}', ['fullPath' => $pl->getStorageLocation()->getFullPath()]);
+                    }
+                    if (!$found) {
+                        // No part lot for this storage location - add one
+                        $partLot = new PartLot();
+                        $partLot->setStorageLocation($storage);
+                        $partLot->setInstockUnknown(false);
+                        $partLot->setAmount(0.0);
+                        $part->addPartLot($partLot);
+                        $em->flush();
+                        if ($withdrawAddHelper->canAdd($partLot)) {
+                            $withdrawAddHelper->add($partLot, 42.0, "Creational add");
                         }
                         $em->flush();
-                        break;
                     }
-                    $logger->info('Part lot {fullPath}', ['fullPath' => $pl->getStorageLocation()->getFullPath()]);
-                }
-                if (!$found) {
-                    // No part lot for this storage location - add one
-                    $partLot = new PartLot();
-                    $partLot->setStorageLocation($storage);
-                    $partLot->setInstockUnknown(false);
-                    $partLot->setAmount(0.0);
-                    $part->addPartLot($partLot);
-                    $em->flush();
-                    if ($withdrawAddHelper->canAdd($partLot)) {
-                        $withdrawAddHelper->add($partLot, 42.0, "Creational add");
-                    }
-                    $em->flush();
                 }
             }
         }
