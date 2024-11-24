@@ -27,25 +27,6 @@ class HandheldScannerDialogType extends AbstractType
 
     public function buildForm(FormBuilderInterface $builder,  array $options = []): void
     {
-        $builder->add('barcode', HiddenType::Class, [
-            'required' => true,
-            'action' => '',
-        ]);
-        $builder->add('manufacturer_pn', TextType::Class, [
-            'required' => false,
-            'label' => 'Manufacturer Part',
-        ]);
-        
-        $builder->addEventListener(FormEvents::PRE_SUBMIT, function (FormEvent $event) {
-            $form = $event->getForm();
-            $data = $event->getData();
-            if (!isset($data['barcode'])) {
-                return;
-            }
-            $r = EIGP114::decode($data['barcode']);
-            $data['manufacturer_pn'] = print_r($r, true);
-            $event->setData($data);
-        });
     }
 
     public function configureOptions(OptionsResolver $resolver): void
