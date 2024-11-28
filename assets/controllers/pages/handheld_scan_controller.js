@@ -7,6 +7,7 @@ export default class extends Controller {
 
     connect(event) {
 	console.log('Controller connected')
+	
     }
     
     async onConnectScanner(event) {
@@ -16,6 +17,10 @@ export default class extends Controller {
 	
 	console.log(device)
 	reader = device.readable.getReader()
+	connectBtn = document.getElementById('form_connect');
+	if (connectBtn != null) {
+	    connectBtn.className = "btn btn-secondary"
+	}
 	decoder = new TextDecoder();
 	var barcodeBuffer = '';
 	while (true) {
