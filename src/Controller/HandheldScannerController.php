@@ -230,7 +230,9 @@ class HandheldScannerController extends AbstractController
                 $partRepository = $this->entityManager->getRepository(Part::class);
                 $part = $partRepository->findOneBy(['manufacturer_product_number' => $data['manufacturer_pn']]);
                 $data['foundpart'] = ($part != null);
-                if ($data['foundpart'] == false && $data['autocommit'] == true) {
+                if ($data['foundpart'] == false &&
+                    $data['missingpart'] == false &&
+                    $data['autocommit'] == true) {
                     $this->addFlash('error', 'Cannot autocommit part - part not in database');
                 }
             }
