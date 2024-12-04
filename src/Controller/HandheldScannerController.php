@@ -46,6 +46,10 @@ class BarcodeScanType
     protected ?string $manufacturerPN;
     protected ?int  $quantity;
     protected ?string $location;
+
+    // Show last item and quantity added to help check if scanning is working well
+    protected ?string $lastManufacturerPN; 
+    protected ?int $lastQuantity;
     
     public function __construct() {
         $this->barcode = "";
@@ -72,12 +76,30 @@ class BarcodeScanType
         return $this;
     }
 
+    public function getLastManufacturerPN(): ?string {
+        return $this->lastManufacturerPN;
+    }
+
+    public function setLastManufacturerPN(?string $lastManufacturerPN): self {
+        $this->lastManufacturerPN = $lastManufacturerPN;
+        return $this;
+    }
+
     public function getQuantity(): ?int {
         return $this->quantity;
     }
 
     public function setQuantity(?int $quantity): self {
         $this->quantity = $quantity;
+        return $this;
+    }
+
+    public function getLastQuantity(): ?int {
+        return $this->lastQuantity;
+    }
+
+    public function setLastQuantity(?int $lastQuantity): self {
+        $this->lastQuantity = $lastQuantity;
         return $this;
     }
 
@@ -88,6 +110,13 @@ class BarcodeScanType
     public function setLocation(?string $location): self {
         $this->location = $location;
         return $this;
+    }
+
+    public function cycleLastAdded() : void {
+        $this->lastManufacturerPN = $this->manufacturerPN;
+        $this->manufacturerPN = null;
+        $this->lastQuantity = $this->quantity;
+        $this->quantity = 0;
     }
 }
 
@@ -113,17 +142,24 @@ class HandheldScannerController extends AbstractController
         $this->logger->info(var_export($request->getPayload()->all(), true));
 
         $barcode = new BarcodeScanType();
-        $builder = $this->createFormBuilder($barcode);
+        $form = $this->buildForm($barcode);
 
-        $this->buildForm($builder);
-
-        $this->addPreSubmitEventHandler($builder);
-
-        $form = $builder->getForm();
         $form->handleRequest($request);
 
         if ($form['autocommit'] == true || ($form->isSubmitted() && $form->isValid())) {
-            $this->processSubmit($form, $barcode);
+            if ($this->processSubmit($form, $barcode)) {
+                // Need a new form to render because we can't change submitted form
+                $this->logger->info('replacing form with fresh');
+                $barcode->cycleLastAdded(); // Shuffle into last added slot
+                $newForm = $this->buildForm($barcode);
+                $newForm->get('missingloc')->setData($form->get('missingloc')->getData());
+                $newForm->get('locfrompart')->setData($form->get('locfrompart')->getData());
+                $newForm->get('foundloc')->setData($form->get('foundloc')->getData());
+                $newForm->get('missingpart')->setData($form->get('missingpart')->getData());
+                $newForm->get('manufacturer_pn')->setData('');
+                $newForm->get('quantity')->setData(0);
+                $form = $newForm;
+            }
         }
         
         return $this->render('label_system/handheld_scanner/handheld_scanner.html.twig', [
@@ -131,8 +167,10 @@ class HandheldScannerController extends AbstractController
         ]);
     }
 
-    protected function buildForm(FormBuilder $builder)
+    protected function buildForm(BarcodeScanType $barcode) : Form
     {
+        $builder = $this->createFormBuilder($barcode);
+
         $builder->add('barcode', HiddenType::Class, [
             'required' => true,
             'action' => '',
@@ -140,15 +178,27 @@ class HandheldScannerController extends AbstractController
         $builder->add('location', TextType::Class, [
             'required' => false,
             'label' => 'Storage Location',
+            'help' => 'Scan this first, will erase part fields',
         ]);
+        
         $builder->add('manufacturer_pn', TextType::Class, [
             'required' => false,
             'label' => 'Manufacturer Part',
         ]);
 
+        $builder->add('last_manufacturer_pn', TextType::Class, [
+            'required' => false,
+            'label' => 'Last Added Manufacturer Part',
+        ]);
+
         $builder->add('quantity', IntegerType::Class, [
             'required' => false,
             'label' => 'Quantity',
+        ]);
+
+        $builder->add('last_quantity', IntegerType::Class, [
+            'required' => false,
+            'label' => 'Last Added Quantity',
         ]);
 
         $builder->add('missingloc', CheckboxType::Class, [
@@ -194,6 +244,13 @@ class HandheldScannerController extends AbstractController
         $builder->add('submit', SubmitType::Class, [
             'label' => 'Submit',
         ]);
+
+        
+        $this->addPreSubmitEventHandler($builder);
+
+        $form = $builder->getForm();
+
+        return $form;
     }
 
     protected function addPreSubmitEventHandler(FormBuilder $builder)
@@ -208,13 +265,17 @@ class HandheldScannerController extends AbstractController
             if (array_key_exists('location', $r)) {
                 $data['location'] = $r['location'];
                 $data['last_scan'] = 'location';
-            }
-            if (array_key_exists('supplier_pn', $r)) {
+                $data['manufacturer_pn'] = '';
+                $data['locfrompart'] = false;
+                $data['foundpart'] = false;
+                $data['quantity'] = '';
+                
+            } else if (array_key_exists('supplier_pn', $r)) {
                 $data['manufacturer_pn'] = $r['supplier_pn'];
                 $data['last_scan'] = 'part';
-            }
-            if (array_key_exists('quantity', $r)) {
-                $data['quantity'] = $r['quantity'];
+                if (array_key_exists('quantity', $r)) {
+                    $data['quantity'] = $r['quantity'];
+                }
             }
 
             // Look up the location in the database to see if one needs to be created
@@ -226,12 +287,13 @@ class HandheldScannerController extends AbstractController
             }
 
             // Look up the part in the database to see if one needs to be created
+            $part = null;
             if ($data['manufacturer_pn'] != "") {
                 $partRepository = $this->entityManager->getRepository(Part::class);
                 $part = $partRepository->findOneBy(['manufacturer_product_number' => $data['manufacturer_pn']]);
                 $data['foundpart'] = ($part != null);
                 if ($data['foundpart'] == false &&
-                    $data['missingpart'] == false &&
+                    (array_key_exists('missingpart', $data) && $data['missingpart'] == false) &&
                     $data['autocommit'] == true) {
                     $this->addFlash('error', 'Cannot autocommit part - part not in database');
                 }
@@ -256,13 +318,80 @@ class HandheldScannerController extends AbstractController
         });
     }
 
-    protected function processSubmit(Form $form, BarcodeScanType $barcode) {
+    protected function processSubmit(Form $form, BarcodeScanType $barcode) : bool {
         $this->logger->info("form submitted");
-        if ($form->getClickedButton() == null) {
-            // Autosubmit possible?
-            if ($form->get('autocommit')->getData() == true &&
-                $barcode->getLocation() != '' && $barcode->getManufacturerPN() != '' &&
+        // We could be here through an autosubmit or because the actual button was pressed
+        // To proceed we need a storage location, manufacturer part number and a quantity
+        if ($form->getClickedButton() != null ||
+            ($form->getClickedButton() == null && $form->get('autocommit')->getData() == true)) {
+            $fail = false;
+            if ($barcode->getLocation() != '' && $barcode->getManufacturerPN() != '' &&
                 $barcode->getQuantity() != 0) {
+                // Got all the data that we need - now work through the items to see if we
+                // can submit the data
+                $storageLocation = $this->getStorageLocation($barcode->getLocation());
+                if (!$storageLocation) {
+                    if ($form->get('missingloc')->getData() == true) {
+                        $storageLocation = $this->createStorageLocation($barcode->getLocation());
+                    } else {
+                        $fail = true;
+                        $this->addFlash('error', 'storage doesn\'t exist');
+                    }
+                }
+
+                $part = $this->getPart($barcode->getManufacturerPN());
+                if (!$part) {
+                    $this->logger->debug('part not found');
+                    if ($form->get('missingpart')->getData() == true) {
+                        $this->logger->debug('create part');
+                        $part = $this->createMissingPart($barcode->getManufacturerPN());
+                        $this->logger->debug('part created');
+                        
+                        $this->entityManager->flush();
+                    } else {
+                        $fail = true;
+                        $this->addFlash('error', 'part doesn\'t exist');
+                    }
+                }
+
+                if (!$fail) {
+                    // Have a part and storage location so attempt to add stock for this combination
+                    $found=false;
+                    $partLots = $part->getPartLots();
+                    if ($partLots) {
+                        foreach ($part->getPartLots() as &$pl) {
+                            if ($pl->getStorageLocation()->getId() == $storageLocation->getId()) {
+                                $this->logger->info('Found existing storage location, adding stock');
+                                if ($this->withdrawAddHelper->canAdd($pl)) {
+                                    $this->withdrawAddHelper->add($pl, $barcode->getQuantity(), "Barcode scan add");
+                                    $found = true;
+                                }
+                                break;
+                            }
+                            $this->logger->info('Part lot {fullPath}', ['fullPath' => $pl->getStorageLocation()->getFullPath()]);
+                        }
+                    }
+                    if (!$found) {
+                        // No part lot for this storage location - add one
+                        $partLot = new PartLot();
+                        $partLot->setStorageLocation($storageLocation);
+                        $partLot->setInstockUnknown(false);
+                        $partLot->setAmount(0.0);
+                        $part->addPartLot($partLot);
+                        $this->entityManager->flush(); // Must have an ID for target
+                        if ($this->withdrawAddHelper->canAdd($partLot)) {
+                            $this->withdrawAddHelper->add($partLot, $barcode->getQuantity(), "Barcode scan add");
+                        }
+
+                    }
+                }
+                    
+                if (!$fail) {
+                    $this->entityManager->flush();
+                }
+
+                return true;
+                /*       
                 $this->logger->info('attempt autosubmit');
                 if ($form->get('missingpart')->getData() == true &&
                     $form->get('foundpart')->getData() == false) {
@@ -270,15 +399,24 @@ class HandheldScannerController extends AbstractController
                     $this->createMissingPart($form, $barcode);
                 }
                 $this->addStock($form, $barcode);
+                return true;*/
             }
         }
-        if ($form->getClickedButton() != null) {
+
+        /*
+        else {
             // Actual submit button was pressed so commit to database
             $storage = null;
             $part = null;
             // See if the storage location exists was in barcode
             if ($barcode->getLocation() != "") {
-                $storage = getStorageLocation($barcode->getLocation());
+                $storage = $this->getStorageLocation($barcode->getLocation());
+                if (!$storage && $form->get('missingloc')->getData() == true) {
+                    $storage = $this->createStorageLocation($barcode->getLocation());
+                    if ($storage) {
+                        $this->addFlash('success', 'storage location created');
+                    }
+                }
             } else if ($barcode->getManufacturerPN() != "") {
                 // Got a part instead
                 $repository = $em->getRepository(Part::class);
@@ -291,38 +429,12 @@ class HandheldScannerController extends AbstractController
             
             // Does a part lot exist for this combination?
             if ($storage != null && $part != null) {
-                $found=false;
-                foreach ($part->getPartLots() as &$pl) {
-                    if ($pl->getStorageLocation()->getId() == $storage->getId()) {
-                        $this->logger->info('Found existing storage location, adding stock');
-                        if ($withdrawAddHelper->canAdd($pl)) {
-                            $withdrawAddHelper->add($pl, $barcode->getQuantity(), "Test add");
-                            $found = true;
-                        }
-                        $em->flush();
-                        break;
-                    }
-                    $this->logger->info('Part lot {fullPath}', ['fullPath' => $pl->getStorageLocation()->getFullPath()]);
-                }
-                if (!$found) {
-                    // No part lot for this storage location - add one
-                    $partLot = new PartLot();
-                    $partLot->setStorageLocation($storage);
-                    $partLot->setInstockUnknown(false);
-                    $partLot->setAmount(0.0);
-                    $part->addPartLot($partLot);
-                    $em->flush();
-                    if ($withdrawAddHelper->canAdd($partLot)) {
-                        $withdrawAddHelper->add($partLot, $barcode->getQuantity(), "Creational add");
-                    }
-                    $em->flush();
-                }
-            }
-        } else {
-        }
+            }*/
+
+        return false;
     }
 
-    protected function getStorageLocation(string $name) : StorageLocation
+    protected function getStorageLocation(string $name) : ?StorageLocation
     {
         $repository = $this->entityManager->getRepository(StorageLocation::class);
         $storage = $repository->findOneBy(['name' => $name]);
@@ -334,17 +446,37 @@ class HandheldScannerController extends AbstractController
         return $storage;
     }
 
-    protected function createMissingPart(Form $form, BarcodeScanType $barcode)
+    protected function createStorageLocation(string $location): StorageLocation
+    {
+        $repository = $this->entityManager->getRepository(StorageLocation::class);
+        $storage = new StorageLocation();
+        $storage->setName($location);
+        $this->entityManager->persist($storage);
+        return $storage;
+    }
+
+    protected function getPart(string $partNumber) : ?Part
+    {
+        $repository = $this->entityManager->getRepository(Part::class);
+        $part = $repository->findOneBy(['manufacturer_product_number' => $partNumber]);
+        if ($part) {
+            $this->logger->info($part->getName());
+        }
+        return $part;
+    }
+    
+    protected function createMissingPart(string $partNumber) : ?Part
     {
         $repository = $this->entityManager->getRepository(Category::class);
         $category = $repository->findOneBy(['name' => 'Unclassified']);
 
         $part = new Part();
         $part->setCategory($category);
-        $part->setName($barcode->getManufacturerPN());
-        $part->setManufacturerProductNumber($barcode->getManufacturerPN());
+        $part->setName($partNumber);
+        $part->setManufacturerProductNumber($partNumber);
         $this->entityManager->persist($part);
-        $this->entityManager->flush();
+
+        return $part;
     }
     
     protected function addStock(Form $form, BarcodeScanType $barcode)

@@ -54,7 +54,7 @@ export default class extends Controller {
 		    // Post this back to the server
 		    document.getElementById('form_barcode').value = barcodeBuffer;
 		    form = document.getElementById('handheld_dialog_form');
-		    form.requestSubmit()
+		    form.requestSubmit();
 		}	    
                 barcodeBuffer = '';
             }
