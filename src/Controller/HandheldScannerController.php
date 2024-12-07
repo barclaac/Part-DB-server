@@ -158,7 +158,6 @@ class HandheldScannerController extends AbstractController
                 $form = $newForm;
             }
         }
-        
         return $this->render('label_system/handheld_scanner/handheld_scanner.html.twig', [
             'form' => $form,
         ]);
@@ -245,7 +244,7 @@ class HandheldScannerController extends AbstractController
         $this->logger->info("form submitted");
         // We could be here through an autosubmit or because the actual button was pressed
         // To proceed we need a storage location, manufacturer part number and a quantity
-        // @var Form $form
+        $this->logger->info('processSubmit');
         if ($form instanceof Form && $form->getClickedButton() != null || $form->get('autocommit')->getData() == true) {
             $fail = false;
             if ($barcode->getLocation() != '' && $barcode->getManufacturerPN() != '' &&

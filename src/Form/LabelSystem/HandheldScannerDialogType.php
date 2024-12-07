@@ -108,5 +108,6 @@ class HandheldScannerDialogType extends AbstractType
     public function configureOptions(OptionsResolver $resolver): void
     {
         $resolver->setDefault('mapped', false);
+        $resolver->setDefault('allow_extra_fields', true);
     }
 }
