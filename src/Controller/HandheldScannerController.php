@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace App\Controller;
 
 use App\Entity\Base\AbstractDBElement;
+use App\Entity\Base\AbstractPartsContainingDBElement;
 use App\Entity\LabelSystem\LabelOptions;
 use App\Entity\LabelSystem\LabelProcessMode;
 use App\Entity\LabelSystem\LabelProfile;
@@ -31,7 +32,8 @@ use Symfony\Component\Form\Extension\Core\Type\IntegerType;
 use Symfony\Component\Form\Extension\Core\Type\SubmitType;
 use Symfony\Component\Form\Extension\Core\Type\TextType;
 use Symfony\Component\Form\Form;
-use Symfony\Component\Form\FormBuilder;
+use Symfony\Component\Form\FormInterface;
+use Symfony\Component\Form\FormBuilderInterface;
 use Symfony\Component\Form\FormError;
 use Symfony\Component\Form\FormEvent;
 use Symfony\Component\Form\FormEvents;
@@ -131,7 +133,7 @@ class HandheldScannerController extends AbstractController
 
     #[Route(path: '/handheldscanner',name: 'handheld_scanner_dialog')]
     public function generator(Request $request, EntityManagerInterface $em, LoggerInterface $logger,
-                              PartLotWithdrawAddHelper $withdrawAddHelper, #[MapQueryParameter] ?string $input = null): Response
+                              PartLotWithdrawAddHelper $withdrawAddHelper): Response
     {
         $logger->info('*** rendering form ***');
         $logger->info(var_export($request->getPayload()->all(), true));
@@ -141,7 +143,7 @@ class HandheldScannerController extends AbstractController
 
         $form->handleRequest($request);
 
-        if ($form['autocommit'] == true || ($form->isSubmitted() && $form->isValid())) {
+        if ($form->get('autocommit')->getData() == true || ($form->isSubmitted() && $form->isValid())) {
             if ($this->processSubmit($form, $em, $logger, $withdrawAddHelper, $barcode)) {
                 // Need a new form to render because we can't change submitted form
                 $logger->info('replacing form with fresh');
@@ -164,7 +166,7 @@ class HandheldScannerController extends AbstractController
 
     protected function buildForm(BarcodeScanType $barcode,
                                  EntityManagerInterface $em,
-                                 LoggerInterface $logger) : Form
+                                 LoggerInterface $logger) : FormInterface
     {
         $builder = $this->createFormBuilder($barcode);
 
@@ -250,7 +252,7 @@ class HandheldScannerController extends AbstractController
         return $form;
     }
 
-    protected function addPreSubmitEventHandler(FormBuilder $builder,
+    protected function addPreSubmitEventHandler(FormBuilderInterface $builder,
                                                 EntityManagerInterface $em,
                                                 LoggerInterface $logger)
     {
@@ -317,14 +319,13 @@ class HandheldScannerController extends AbstractController
         });
     }
 
-    protected function processSubmit(Form $form, EntityManagerInterface $em,
+    protected function processSubmit(FormInterface $form, EntityManagerInterface $em,
                                      LoggerInterface $logger, PartLotWithdrawAddHelper $withdrawAddHelper,
                                      BarcodeScanType $barcode) : bool {
         $logger->info("form submitted");
         // We could be here through an autosubmit or because the actual button was pressed
         // To proceed we need a storage location, manufacturer part number and a quantity
-        if ($form->getClickedButton() != null ||
-            ($form->getClickedButton() == null && $form->get('autocommit')->getData() == true)) {
+        if ($form->getClickedButton() != null || $form->get('autocommit')->getData() == true) {
             $fail = false;
             if ($barcode->getLocation() != '' && $barcode->getManufacturerPN() != '' &&
                 $barcode->getQuantity() != 0) {
@@ -344,7 +345,7 @@ class HandheldScannerController extends AbstractController
                 if (!$part) {
                     $logger->debug('part not found');
                     if ($form->get('missingpart')->getData() == true) {
-                        $this->logger->debug('create part');
+                        $logger->debug('create part');
                         $part = $this->createMissingPart($em, $logger, $barcode->getManufacturerPN());
                         $logger->debug('part created');
                         
@@ -359,7 +360,7 @@ class HandheldScannerController extends AbstractController
                     // Have a part and storage location so attempt to add stock for this combination
                     $found=false;
                     $partLots = $part->getPartLots();
-                    if ($partLots) {
+                    if ($partLots != null) {
                         foreach ($part->getPartLots() as &$pl) {
                             if ($pl->getStorageLocation()->getId() == $storageLocation->getId()) {
                                 $logger->info('Found existing storage location, adding stock');
@@ -379,9 +380,9 @@ class HandheldScannerController extends AbstractController
                         $partLot->setInstockUnknown(false);
                         $partLot->setAmount(0.0);
                         $part->addPartLot($partLot);
-                        $this->entityManager->flush(); // Must have an ID for target
-                        if ($this->withdrawAddHelper->canAdd($partLot)) {
-                            $this->withdrawAddHelper->add($partLot, $barcode->getQuantity(), "Barcode scan add");
+                        $em->flush(); // Must have an ID for target
+                        if ($withdrawAddHelper->canAdd($partLot)) {
+                            $withdrawAddHelper->add($partLot, $barcode->getQuantity(), "Barcode scan add");
                         }
 
                     }
@@ -398,7 +399,7 @@ class HandheldScannerController extends AbstractController
         return false;
     }
 
-    protected function getStorageLocation(EntityManagerInterface $em, LoggerInterface $logger, string $name) : ?StorageLocation
+    protected function getStorageLocation(EntityManagerInterface $em, LoggerInterface $logger, string $name) : ?AbstractPartsContainingDBElement
     {
         $repository = $em->getRepository(StorageLocation::class);
         $storage = $repository->findOneBy(['name' => $name]);
@@ -468,16 +469,16 @@ class HandheldScannerController extends AbstractController
             $found=false;
             foreach ($part->getPartLots() as &$pl) {
                 if ($pl->getStorageLocation()->getId() == $storage->getId()) {
-                    $this->logger->info('Found existing storage location, adding stock');
+                    $logger->info('Found existing storage location, adding stock');
                     if ($withdrawAddHelper->canAdd($pl)) {
                         $withdrawAddHelper->add($pl, $barcode->getQuantity(), "Test add");
                         $found = true;
                     }
-                    $this->entityManager->flush();
+                    $em->flush();
                     $this->addFlash('success', 'stock added');
                     break;
                 }
-                $this->logger->info('Part lot {fullPath}', ['fullPath' => $pl->getStorageLocation()->getFullPath()]);
+                $logger->info('Part lot {fullPath}', ['fullPath' => $pl->getStorageLocation()->getFullPath()]);
                 }
             if (!$found) {
                 // No part lot for this storage location - add one
@@ -486,12 +487,12 @@ class HandheldScannerController extends AbstractController
                 $partLot->setInstockUnknown(false);
                 $partLot->setAmount(0.0);
                 $part->addPartLot($partLot);
-                $this->entityManager->flush();
-                if ($this->withdrawAddHelper->canAdd($partLot)) {
-                    $this->withdrawAddHelper->add($partLot, $barcode->getQuantity(), "Creational add");
+                $em->flush();
+                if ($withdrawAddHelper->canAdd($partLot)) {
+                    $withdrawAddHelper->add($partLot, $barcode->getQuantity(), "Creational add");
                 }
                 
-                $this->entityManager->flush();
+                $em->flush();
                 $this->addFlash('success', 'partlot added');
                 
             }
