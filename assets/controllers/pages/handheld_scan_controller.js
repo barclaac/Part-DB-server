@@ -52,7 +52,7 @@ export default class extends Controller {
                     console.log('badly formed barcode')
                 } else {
 		    // Post this back to the server
-		    document.getElementById('form_barcode').value = barcodeBuffer;
+		    document.getElementById('handheld_scanner_dialog_barcode').value = barcodeBuffer;
 		    form = document.getElementById('handheld_dialog_form');
 		    form.requestSubmit();
 		}	    
