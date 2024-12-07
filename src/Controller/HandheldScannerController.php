@@ -183,6 +183,11 @@ class HandheldScannerController extends AbstractController
                 return;
             }
             $r = EIGP114::decode($data['barcode']);
+
+            // Remove barcode so that if user has edited fields that the barcode won't
+            // override any of the user's values
+            unset($data['barcode']);
+            
             if (array_key_exists('location', $r)) {
                 $data['location'] = $r['location'];
                 $data['last_scan'] = 'location';

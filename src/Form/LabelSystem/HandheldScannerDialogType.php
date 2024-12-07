@@ -97,9 +97,17 @@ class HandheldScannerDialogType extends AbstractType
 
         $builder->add('connect', ButtonType::Class, [
             'label' => 'Connect',
-            'attr' => ['data-action' => 'pages--handheld-scan#onConnectScanner', 'class' => 'btn btn-primary' ],
+            'attr' => ['data-action' => 'pages--handheld-scan#onConnectScanner',
+                       'class' => 'btn btn-primary' ],
         ]);
-        
+
+        $builder->add('disconnect', ButtonType::Class, [
+            'label' => 'Disconnect',
+            'attr' => ['data-action' => 'pages--handheld-scan#onDisconnectScanner',
+                       'class' => 'btn btn-primary',
+                       'style' => 'display: none'],
+        ]);
+
         $builder->add('submit', SubmitType::Class, [
             'label' => 'Submit',
         ]);
